@@ -2,9 +2,6 @@ require('dotenv').config()
 const express = require('express');
 const bodyParser = require('body-parser');
 const twilio = require('twilio');
-const fs = require('fs');
-const FormData = require('form-data');
-openai.apiKey = proecess.env.OPENAI_API_KEY
 
 
 const accountSid = process.env.TWILIO_SID;
@@ -24,8 +21,8 @@ app.post('/sms', async (req, res) => {
 
   try {
     await client.messages.create({
-      body: `Forwarded SMS from ${fromNumber}: ${messageText}`,
-      from: '+14155238886',
+      body: `AN SMS FROM ${fromNumber}: ${messageText}`,
+      from: 'whatsapp:+14155238886',
       to: targetWhatsAppNumber,
     });
 
@@ -41,78 +38,75 @@ app.post('/sms', async (req, res) => {
 
 // Add this new route to handle incoming calls
 app.post('/call', (req, res) => {
-    const twiml = new twilio.twiml.VoiceResponse();
 
-    twiml.record({
-      action: '/process_speech',
-      timeout: 10,
-      transcribe: false, // Disable Twilio transcription
-    })
-    .say("Please leave a message after the beep.")
+  const twiml = new twilio.twiml.VoiceResponse();
 
-    twiml.say('We did not receive any input. Goodbye!');
-    res.type('text/xml');
-    res.send(twiml.toString());
+  twiml.say(
+    {
+      voice: 'Polly.Amy',
+    },
+    `We are currently unavailable, please leave a voice message after the beep`);
+
+  // Record the message
+  twiml.record({
+    action: '/process_speech',
+    timeout: 10,
+    transcribe: false, // Disable Twilio transcription
+  });
+
+  // Add a say prompt for cases when no input is received
+  twiml.say(
+    {
+      voice: 'Polly.Amy',
+    },
+    'We did not receive any input. Goodbye!');
+
+  // Send the response
+  res.type('text/xml');
+  res.send(twiml.toString());
+
 });
 
 
 
 app.post('/process_speech', async (req, res) => {
-    const twiml = new twilio.twiml.VoiceResponse();
-    const recordingUrl = req.body.RecordingUrl;
-    const fromNumber = req.body.From;
+  const twiml = new twilio.twiml.VoiceResponse();
+  const recordingUrl = req.body.RecordingUrl;
+  const fromNumber = req.body.From;
 
-    try {
-      // Fetch the audio file from Twilio
-      const response = await axios.get(recordingUrl, {
-        responseType: 'arraybuffer',
-        headers: { 'Content-Type': 'audio/mpeg' },
-      });
+  try {
+    // Forward the voice message URL to WhatsApp
+    const message = await client.messages.create({
+      body: `VOICE MESSAGE FROM ${fromNumber}: ${recordingUrl}`,
+      from: 'whatsapp:+14155238886', // Replace with your Twilio WhatsApp Sandbox number
+      to: targetWhatsAppNumber,
+    });
 
-      // Save the audio file locally
-      const audioFilePath = 'audio.mp3';
-      fs.writeFileSync(audioFilePath, Buffer.from(response.data, 'binary'));
-
-      // Create a form data object
-      const formData = new FormData();
-      formData.append('file', fs.createReadStream(audioFilePath));
-
-      // Send the audio file to OpenAI's Whisper ASR
-      const openaiResponse = await axios.post(
-        'https://api.openai.com/v1/audio/transcriptions',
-        formData,
-        {
-          headers: {
-            'Content-Type': `multipart/form-data; boundary=${formData.getBoundary()}`,
-            Authorization: `Bearer ${openai.apiKey}`,
-          },
-          params: { model: 'whisper-1' },
-        }
-      );
-
-      // Get the transcription result from OpenAI's Whisper ASR
-      const speechResult = openaiResponse.data.data.transcript;
-
-      // Forward the transcribed message to WhatsApp
-      await client.messages.create({
-        body: `Voice message from ${fromNumber}: ${speechResult}`,
-        from: 'whatsapp:+14155238886', // Replace with your Twilio WhatsApp Sandbox number
-        to: targetWhatsAppNumber,
-      });
-
+    if (message.errorCode) {
+      console.error(`Failed to forward voice message: ${message.errorMessage}`);
+      twiml.say(    {
+        voice: 'Polly.Amy',
+      },
+      'We encountered an error while forwarding your message. Goodbye!');
+    } else {
       console.log(`Forwarded voice message from ${fromNumber} to ${targetWhatsAppNumber}`);
-      twiml.say('Your message has been forwarded. Goodbye!');
-    } catch (error) {
-      console.error(`Failed to forward voice message from ${fromNumber}: ${error.message}`);
-      twiml.say('We encountered an error while forwarding your message. Goodbye!');
+      twiml.say(    {
+        voice: 'Polly.Amy',
+      },
+      'Your message has been forwarded. Goodbye!');
     }
+  } catch (error) {
+    console.error(`Failed to forward voice message from ${fromNumber}: ${error.message}`);
+    twiml.say(    {
+      voice: 'Polly.Amy',
+    },
+    'We encountered an error while forwarding your message. Goodbye!');
+  }
 
-    // Remove the locally saved audio file
-    fs.unlinkSync(audioFilePath);
-
-    res.type('text/xml');
-    res.send(twiml.toString());
+  res.type('text/xml');
+  res.send(twiml.toString());
 });
+
 
 
 const port = process.env.PORT || 3000;
